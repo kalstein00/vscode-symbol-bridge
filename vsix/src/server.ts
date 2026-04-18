@@ -13,7 +13,13 @@ import {
   symbolKindToString,
   uriToRangePayload
 } from "./protocol";
+import { createErrorResponse, createOkResponse, parseRequestLine } from "./bridge";
+import { detectProviderStatusFromVsCode } from "./provider";
 import { ensureRuntimeDir, registerEntry, unregisterEntry } from "./registry";
+import {
+  shouldTreatEmptyDefinitionAsNotFound,
+  shouldTreatEmptyWorkspaceSymbolAsNotFound
+} from "./result-policy";
 
 interface BridgeServerOptions {
   context: vscode.ExtensionContext;
@@ -34,6 +40,7 @@ export class BridgeServer implements vscode.Disposable {
   private readonly output: vscode.OutputChannel;
   private server?: net.Server;
   private endpoint?: string;
+  private startedAt?: string;
 
   constructor(options: BridgeServerOptions) {
     this.context = options.context;
@@ -76,6 +83,7 @@ export class BridgeServer implements vscode.Disposable {
     });
 
     await this.updateRegistry();
+    this.registerEventHandlers();
     this.output.appendLine(`server started at ${this.endpoint}`);
   }
 
@@ -122,17 +130,12 @@ export class BridgeServer implements vscode.Disposable {
   }
 
   private async handleRequest(line: string): Promise<BridgeResponse> {
-    let request: BridgeRequest;
-
-    try {
-      request = JSON.parse(line) as BridgeRequest;
-    } catch {
-      return this.errorResponse("unknown", "INVALID_REQUEST", "Malformed JSON request", false);
+    const parsed = parseRequestLine(this.instanceId, line);
+    if ("ok" in parsed) {
+      return parsed;
     }
 
-    if (!request.id || !request.method) {
-      return this.errorResponse(request.id ?? "unknown", "INVALID_REQUEST", "Missing id or method", false);
-    }
+    const request: BridgeRequest = parsed;
 
     try {
       switch (request.method) {
@@ -148,6 +151,10 @@ export class BridgeServer implements vscode.Disposable {
           return this.errorResponse(request.id, "UNSUPPORTED_METHOD", `Unsupported method: ${request.method}`, false);
       }
     } catch (error) {
+      if (error instanceof BridgeRequestError) {
+        return this.errorResponse(request.id, error.code, error.message, false);
+      }
+
       if (error instanceof ProviderUnavailableError) {
         return this.errorResponse(request.id, "NO_PROVIDER", error.message, false);
       }
@@ -162,15 +169,7 @@ export class BridgeServer implements vscode.Disposable {
   }
 
   private okResponse(id: string, result: unknown, documentDirty?: boolean): BridgeResponse {
-    return {
-      id,
-      ok: true,
-      meta: {
-        instanceId: this.instanceId,
-        documentDirty
-      },
-      result
-    };
+    return createOkResponse(this.instanceId, id, result, documentDirty);
   }
 
   private errorResponse(
@@ -179,18 +178,7 @@ export class BridgeServer implements vscode.Disposable {
     message: string,
     retryable: boolean
   ): BridgeResponse {
-    return {
-      id,
-      ok: false,
-      meta: {
-        instanceId: this.instanceId
-      },
-      error: {
-        code,
-        message,
-        retryable
-      }
-    };
+    return createErrorResponse(this.instanceId, id, code, message, retryable);
   }
 
   private async healthResult(): Promise<HealthResult> {
@@ -214,6 +202,12 @@ export class BridgeServer implements vscode.Disposable {
     const query = String(params.query ?? "");
     const limit = params.limit ? Number(params.limit) : undefined;
     const workspaceRoot = params.workspaceRoot ? String(params.workspaceRoot) : undefined;
+    const workspaceFolders = (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath);
+    const providerDiagnosis = this.detectProviderStatus(vscode.window.activeTextEditor?.document);
+
+    if (workspaceRoot && !workspaceFolders.includes(workspaceRoot)) {
+      throw new BridgeRequestError("WORKSPACE_NOT_FOUND", `Workspace not found: ${workspaceRoot}`);
+    }
 
     const symbols =
       (await vscode.commands.executeCommand<vscode.SymbolInformation[]>(
@@ -224,6 +218,14 @@ export class BridgeServer implements vscode.Disposable {
     const filtered = workspaceRoot
       ? symbols.filter((item) => item.location.uri.fsPath.startsWith(workspaceRoot))
       : symbols;
+
+    if (filtered.length === 0 && providerDiagnosis.status.workspaceSymbol === "unavailable") {
+      throw new ProviderUnavailableError(providerDiagnosis.reason ?? "No symbol provider available for this workspace");
+    }
+
+    if (filtered.length === 0 && shouldTreatEmptyWorkspaceSymbolAsNotFound(query, providerDiagnosis.status.workspaceSymbol)) {
+      throw new BridgeRequestError("SYMBOL_NOT_FOUND", `No workspace symbols found for query: ${query}`);
+    }
 
     return {
       items: filtered.slice(0, limit ?? filtered.length).map((item) => ({
@@ -238,12 +240,16 @@ export class BridgeServer implements vscode.Disposable {
 
   private async definitionResponse(id: string, params: Record<string, unknown>): Promise<BridgeResponse> {
     const document = await this.resolveDocument(params);
-    this.assertProviderAvailable(document);
-    const result = await this.definition(params, document);
+    const providerDiagnosis = this.assertProviderAvailable(document, "definition");
+    const result = await this.definition(params, document, providerDiagnosis.status.definition);
     return this.okResponse(id, result, document.isDirty);
   }
 
-  private async definition(params: Record<string, unknown>, document: vscode.TextDocument) {
+  private async definition(
+    params: Record<string, unknown>,
+    document: vscode.TextDocument,
+    providerStatus: HealthResult["providerStatus"]["definition"]
+  ) {
     const position = new vscode.Position(
       Number(params.line ?? 0),
       Number(params.character ?? 0)
@@ -255,6 +261,10 @@ export class BridgeServer implements vscode.Disposable {
         document.uri,
         position
       )) ?? [];
+
+    if (definitions.length === 0 && shouldTreatEmptyDefinitionAsNotFound(providerStatus)) {
+      throw new BridgeRequestError("SYMBOL_NOT_FOUND", "Definition not found");
+    }
 
     const items = definitions.map((item) => {
       if ("targetUri" in item) {
@@ -280,7 +290,7 @@ export class BridgeServer implements vscode.Disposable {
 
   private async documentSymbolResponse(id: string, params: Record<string, unknown>): Promise<BridgeResponse> {
     const document = await this.resolveDocument(params);
-    this.assertProviderAvailable(document);
+    this.assertProviderAvailable(document, "documentSymbol");
     const result = await this.documentSymbol(params, document);
     return this.okResponse(id, result, document.isDirty);
   }
@@ -321,82 +331,39 @@ export class BridgeServer implements vscode.Disposable {
   private async resolveDocument(params: Record<string, unknown>): Promise<vscode.TextDocument> {
     const uriValue = params.uri;
     if (!uriValue || typeof uriValue !== "string") {
-      throw new Error("uri is required");
+      throw new BridgeRequestError("INVALID_REQUEST", "uri is required");
     }
 
-    const uri = vscode.Uri.parse(uriValue);
-    return vscode.workspace.openTextDocument(uri);
+    try {
+      const uri = vscode.Uri.parse(uriValue);
+      return await vscode.workspace.openTextDocument(uri);
+    } catch {
+      throw new BridgeRequestError("DOCUMENT_NOT_FOUND", `Document not found: ${uriValue}`);
+    }
   }
 
-  private assertProviderAvailable(document: vscode.TextDocument): void {
+  private assertProviderAvailable(
+    document: vscode.TextDocument,
+    method: "definition" | "documentSymbol"
+  ): {
+    status: HealthResult["providerStatus"];
+    reason?: string;
+  } {
     const diagnosis = this.detectProviderStatus(document);
-    const status = diagnosis.status;
+    const status = diagnosis.status[method];
 
-    if (status.definition === "unavailable" || status.documentSymbol === "unavailable") {
+    if (status === "unavailable") {
       throw new ProviderUnavailableError(diagnosis.reason ?? "No symbol provider available for this document");
     }
+
+    return diagnosis;
   }
 
   private detectProviderStatus(document?: vscode.TextDocument): {
     status: HealthResult["providerStatus"];
     reason?: string;
   } {
-    if ((vscode.workspace.workspaceFolders ?? []).length === 0) {
-      return {
-        status: {
-          workspaceSymbol: "unavailable",
-          definition: "unavailable",
-          documentSymbol: "unavailable"
-        },
-        reason: "single-file mode unsupported"
-      };
-    }
-
-    if (!document) {
-      return {
-        status: {
-          workspaceSymbol: "unknown",
-          definition: "unknown",
-          documentSymbol: "unknown"
-        },
-        reason: "No active document"
-      };
-    }
-
-    const languageId = document.languageId;
-    if (!["c", "cpp", "cuda-cpp", "objective-c", "objective-cpp"].includes(languageId)) {
-      return {
-        status: {
-          workspaceSymbol: "unknown",
-          definition: "unknown",
-          documentSymbol: "unknown"
-        },
-        reason: `No explicit provider heuristic for language: ${languageId}`
-      };
-    }
-
-    const cpptools = vscode.extensions.getExtension("ms-vscode.cpptools");
-    const clangd = vscode.extensions.getExtension("llvm-vs-code-extensions.vscode-clangd");
-    const providerEnabled = Boolean(cpptools?.isActive || clangd?.isActive || cpptools || clangd);
-
-    if (!providerEnabled) {
-      return {
-        status: {
-          workspaceSymbol: "unavailable",
-          definition: "unavailable",
-          documentSymbol: "unavailable"
-        },
-        reason: "No enabled C/C++ provider extension detected"
-      };
-    }
-
-    return {
-      status: {
-        workspaceSymbol: "ready",
-        definition: "ready",
-        documentSymbol: "ready"
-      }
-    };
+    return detectProviderStatusFromVsCode(document);
   }
 
   private async updateRegistry(): Promise<void> {
@@ -404,12 +371,14 @@ export class BridgeServer implements vscode.Disposable {
       return;
     }
 
+    this.startedAt ??= new Date().toISOString();
+
     const entry: RegistryEntry = {
       instanceId: this.instanceId,
       workspaceFolders: (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
       endpoint: this.endpoint,
       pid: process.pid,
-      startedAt: new Date().toISOString(),
+      startedAt: this.startedAt,
       extensionVersion: this.context.extension.packageJSON.version,
       capabilities: CAPABILITIES,
       activeFile: vscode.window.activeTextEditor?.document.uri.fsPath
@@ -417,11 +386,34 @@ export class BridgeServer implements vscode.Disposable {
 
     await registerEntry(entry);
   }
+
+  private registerEventHandlers(): void {
+    this.context.subscriptions.push(
+      vscode.window.onDidChangeActiveTextEditor(() => {
+        void this.updateRegistry();
+      })
+    );
+    this.context.subscriptions.push(
+      vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        void this.updateRegistry();
+      })
+    );
+  }
 }
 
 class ProviderUnavailableError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ProviderUnavailableError";
+  }
+}
+
+class BridgeRequestError extends Error {
+  readonly code: ErrorCode;
+
+  constructor(code: ErrorCode, message: string) {
+    super(message);
+    this.name = "BridgeRequestError";
+    this.code = code;
   }
 }

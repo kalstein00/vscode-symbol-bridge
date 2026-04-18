@@ -16,6 +16,11 @@
   - `workspace-symbol`
   - `document-symbol`
   - `definition`
+- `vsix`/helper CLI 단위 테스트 추가 및 단일 테스트 진입점 추가
+- VS Code test host 기반 integration test script 추가
+- active editor / workspace folder 변경 시 registry 갱신 추가
+- `WORKSPACE_NOT_FOUND`, `DOCUMENT_NOT_FOUND`, `ENDPOINT_UNAVAILABLE` 오류 처리 보강
+- provider detection heuristic을 C/C++ 고정 규칙에서 language/extension 기반 규칙으로 개선
 
 검증에 사용한 샘플 파일:
 
@@ -38,47 +43,74 @@
 
 ## 3. 남은 작업
 
-### P1. 테스트 자동화
+### P1. MVP 종료 기준
+
+현재 판단:
+
+- 현재 MVP 수준의 P1은 종료로 본다.
+- 자동화된 테스트 진입점이 존재한다.
+- 핵심 오류 코드는 실제 응답으로 구분된다.
+- registry 선택/갱신의 기본 경로가 검증된다.
+- 남은 이슈는 기능 부재라기보다 환경 의존 검증과 정밀도 향상 성격이다.
+
+잔여 P1 없음.
+
+### P2. 테스트 확장
 
 목표:
 
-- 현재 수동 검증 흐름을 재현 가능한 자동 테스트로 바꾼다.
+- 현재 자동화 범위를 실제 provider가 있는 환경까지 확장한다.
 
-작업:
+현재 상태:
 
-- helper CLI 단위 테스트 추가
-- registry selection 로직 테스트 추가
-- extension protocol serialization 테스트 추가
-- 가능하면 integration test script 추가
+- helper CLI 단위 테스트 추가 완료
+- registry selection 로직 테스트 추가 완료
+- extension protocol serialization / malformed request 테스트 추가 완료
+- repo root `scripts/test.sh` 단일 진입점 추가 완료
+- `scripts/test-integration.sh` 및 VS Code test host smoke test 추가 완료
+
+남은 작업:
+
+- 실제 symbol provider가 설치된 환경에서 `workspace-symbol`/`document-symbol`/`definition`까지 검증하는 provider-aware integration test 추가
 
 권장 결과물:
 
 - `npm test` 또는 `scripts/test-integration.sh` 같은 단일 진입점
 
-### P1. 오류 처리 정교화
+### P2. 오류 처리 정밀화
 
 목표:
 
-- 빈 결과와 provider 부재를 더 명확히 구분한다.
+- 현재 규칙을 더 높은 확신도로 다듬는다.
 
-작업:
+현재 상태:
 
-- `NO_PROVIDER` 판정 규칙 보강
-- `DOCUMENT_NOT_FOUND`, `WORKSPACE_NOT_FOUND`를 실제로 반환하도록 정리
-- socket 연결 실패 시 `ENDPOINT_UNAVAILABLE`를 CLI에서도 더 명확히 출력
-- malformed request 및 parse error 테스트 추가
+- `DOCUMENT_NOT_FOUND`, `WORKSPACE_NOT_FOUND` 실제 반환 추가 완료
+- socket 연결 실패 시 CLI `ENDPOINT_UNAVAILABLE` 출력 보강 완료
+- malformed request / parse error 테스트 추가 완료
+- `NO_PROVIDER` heuristic을 language/extension 기반으로 1차 일반화 완료
+- 빈 `definition`/`workspaceSymbol` 결과에 대해 `SYMBOL_NOT_FOUND` 분기 추가 완료
+- 빈 `documentSymbol` 결과는 정상 빈 결과로 유지하는 정책 확정 완료
 
-### P1. Registry 갱신 품질 개선
+남은 작업:
+
+- 실제 provider capability 탐지에 더 가까운 근거 수집 방식 검토
+
+### P2. Registry 갱신 품질 개선
 
 목표:
 
 - 현재는 서버 시작 시 registry를 기록하지만, 활성 파일 변경 반영은 부족하다.
 
-작업:
+현재 상태:
 
-- active editor 변경 시 registry `activeFile` 갱신
-- workspace folder 변경 시 registry 재기록
-- extension reload/abnormal exit 시 stale entry 정리 보강
+- active editor 변경 시 registry `activeFile` 갱신 추가 완료
+- workspace folder 변경 시 registry 재기록 추가 완료
+- stale entry는 registry 등록 시 dead pid 정리로 1차 보강됨
+
+남은 작업:
+
+- extension reload/abnormal exit 시 stale socket / registry 정리를 더 공격적으로 보강
 
 ### P2. CLI 사용성 개선
 
@@ -138,16 +170,16 @@
 - `health`의 provider 판정은 heuristic 수준이며 완전한 capability 탐지는 아님
 - 비 C/C++ 문서에서는 현재 빈 결과가 반환될 수 있으며, 항상 `NO_PROVIDER`로 떨어지지는 않음
 - Windows/macOS IPC 동작은 코드 경로만 있고 실제 현장 검증은 안 함
-- 현재 integration 검증은 로컬 수동 실행 기반임
+- symbol provider를 포함한 integration 검증은 아직 로컬 수동 실행 비중이 큼
 
 ## 5. 재개 순서 추천
 
 다시 시작할 때는 아래 순서가 가장 효율적이다.
 
-1. 테스트 자동화부터 만든다.
-2. registry 갱신과 오류 코드를 정리한다.
-3. CLI human output과 README를 정리한다.
-4. 그 다음에 패키징과 기능 확장을 진행한다.
+1. provider-aware integration test 범위를 확장한다.
+2. provider capability 판단 근거를 더 정교화한다.
+3. stale socket / registry 정리를 더 공격적으로 보강한다.
+4. CLI human output과 README를 더 다듬고 패키징으로 넘어간다.
 
 ## 6. 재개 체크리스트
 
@@ -182,3 +214,8 @@ node skills/vscode-symbol-bridge/bin/vsb definition --file sandbox/sample.cpp --
 - 오류 코드가 PRD 수준으로 정리된다.
 - README만 보고 extension과 skill을 설치하고 검증할 수 있다.
 - Windows/macOS/Linux 중 최소 2개 이상에서 실제 동작 검증이 있다.
+
+현재 판정:
+
+- 위 조건 중 마지막 항목을 제외한 MVP 구현 조건은 충족한 것으로 본다.
+- 크로스플랫폼 현장 검증은 릴리스 전 검증 항목으로 분리한다.

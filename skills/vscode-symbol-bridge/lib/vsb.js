@@ -6,6 +6,7 @@ const path = require("node:path");
 const net = require("node:net");
 const crypto = require("node:crypto");
 const { pathToFileURL } = require("node:url");
+const { fileURLToPath } = require("node:url");
 
 function runtimeRoot() {
   switch (process.platform) {
@@ -83,7 +84,10 @@ function currentWorkingFile(flags) {
 function selectEntry(entries, flags) {
   const liveEntries = entries.filter((entry) => alive(entry.pid));
   if (liveEntries.length === 0) {
-    throw new Error("No live VS Code Symbol Bridge endpoint found. Open VS Code with a workspace folder first.");
+    throw new CliError(
+      "ENDPOINT_UNAVAILABLE",
+      "No live VS Code Symbol Bridge endpoint found. Open VS Code with a workspace folder first."
+    );
   }
 
   if (typeof flags.workspace === "string") {
@@ -95,6 +99,8 @@ function selectEntry(entries, flags) {
     if (matches.length > 1) {
       throw new Error(`Multiple endpoints matched explicit workspace: ${explicit}`);
     }
+
+    throw new CliError("WORKSPACE_NOT_FOUND", `Workspace not found in registry: ${explicit}`);
   }
 
   const file = currentWorkingFile(flags);
@@ -127,6 +133,23 @@ function selectEntry(entries, flags) {
   }
 
   throw new Error("Multiple endpoints available. Use --workspace to select one.");
+}
+
+function formatPathWithPosition(uri, range) {
+  try {
+    if (!uri.startsWith("file:")) {
+      return uri;
+    }
+
+    const filePath = fileURLToPath(uri);
+    if (!range || !range.start) {
+      return filePath;
+    }
+
+    return `${filePath}:${Number(range.start.line) + 1}:${Number(range.start.character) + 1}`;
+  } catch {
+    return uri;
+  }
 }
 
 function buildRequest(command, flags, positional) {
@@ -179,7 +202,19 @@ function sendRequest(endpoint, request) {
     let buffer = "";
 
     socket.setEncoding("utf8");
-    socket.once("error", (error) => reject(error));
+    socket.once("error", (error) => {
+      if (error && ["ENOENT", "ECONNREFUSED", "EPIPE"].includes(error.code)) {
+        reject(
+          new CliError(
+            "ENDPOINT_UNAVAILABLE",
+            `Bridge endpoint is unavailable: ${endpoint}`
+          )
+        );
+        return;
+      }
+
+      reject(error);
+    });
     socket.on("data", (chunk) => {
       buffer += chunk;
       const newline = buffer.indexOf("\n");
@@ -200,9 +235,28 @@ function sendRequest(endpoint, request) {
 
 function printHuman(response, command) {
   if (!response.ok) {
+    if (response.error.code === "SYMBOL_NOT_FOUND") {
+      if (command === "definition") {
+        console.log("Definition not found");
+      } else if (command === "workspace-symbol") {
+        console.log("No workspace symbols found");
+      } else {
+        console.log(response.error.message);
+      }
+      process.exitCode = 2;
+      return;
+    }
+
+    if (response.error.code === "NO_PROVIDER") {
+      console.error("No symbol provider available");
+      console.error(response.error.message);
+      process.exitCode = 2;
+      return;
+    }
+
     console.error(`Bridge error: ${response.error.code}`);
     console.error(response.error.message);
-    process.exitCode = 2;
+    process.exitCode = response.error.code === "ENDPOINT_UNAVAILABLE" ? 3 : 2;
     return;
   }
 
@@ -263,7 +317,7 @@ function printHuman(response, command) {
         console.log(`Document dirty: ${String(response.meta.documentDirty)}`);
       }
       for (const item of result.items) {
-        console.log(`${item.uri}`);
+        console.log(formatPathWithPosition(item.uri, item.range));
       }
       break;
     default:
@@ -276,6 +330,14 @@ async function main() {
 
   if (!command || flags.help) {
     console.log("Usage: vsb <health|workspace-symbol|document-symbol|definition> [options]");
+    console.log("Options:");
+    console.log("  --workspace <path>  Select a specific workspace root");
+    console.log("  --file <path>       Target file for document queries");
+    console.log("  --line <n>          Zero-based line for definition");
+    console.log("  --character <n>     Zero-based character for definition");
+    console.log("  --limit <n>         Limit workspace-symbol results");
+    console.log("  --json              Print raw JSON response");
+    console.log("  --help              Show usage");
     process.exit(flags.help ? 0 : 1);
   }
 
@@ -297,7 +359,33 @@ async function main() {
   printHuman(response, command);
 }
 
-main().catch((error) => {
+class CliError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = "CliError";
+    this.code = code;
+  }
+}
+
+module.exports = {
+  CliError,
+  buildRequest,
+  formatPathWithPosition,
+  parseArgs,
+  selectEntry,
+  sendRequest
+};
+
+if (require.main === module) {
+  main().catch((error) => {
+    if (error instanceof CliError) {
+      console.error(`Bridge error: ${error.code}`);
+      console.error(error.message);
+      process.exit(error.code === "ENDPOINT_UNAVAILABLE" ? 3 : 1);
+      return;
+    }
+
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
-});
+  });
+}

@@ -34,14 +34,16 @@
   },
   "scripts": {
     "build": "tsc -p .",
+    "test": "npm run build && node --test test/*.test.js",
+    "test:integration": "npm run build && node test/integration/runTest.js",
     "watch": "tsc -w -p .",
     "package": "vsce package"
   },
   "devDependencies": {
+    "@vscode/test-electron": "^2.5.2",
     "@types/node": "^22.15.18",
     "@types/vscode": "^1.90.0",
     "typescript": "^5.8.3",
     "@vscode/vsce": "^3.6.2"
   }
 }
-

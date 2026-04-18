@@ -326,6 +326,12 @@ VS Code Extension은 다음 명령을 사용한다.
 - provider 부재와 결과 없음이 구분되지 않는 경우에는 빈 결과 또는
   `SYMBOL_NOT_FOUND`로 처리한다.
 
+빈 결과 처리 규칙:
+
+- `definition`: provider 부재가 명확하지 않으면 빈 결과 대신 `SYMBOL_NOT_FOUND`
+- `workspaceSymbol`: 비어 있지 않은 query에 한해 provider 부재가 명확하지 않으면 `SYMBOL_NOT_FOUND`
+- `documentSymbol`: 빈 계층도 유효한 상태로 보고 성공 응답의 `items: []`를 유지
+
 ### 9.7 보안 요구사항
 
 - 동일 OS 사용자 컨텍스트에서만 접근 가능해야 한다.

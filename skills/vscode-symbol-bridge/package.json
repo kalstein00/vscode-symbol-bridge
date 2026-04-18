@@ -2,8 +2,10 @@
   "name": "cline-skill-vscode-symbol-bridge",
   "private": true,
   "version": "0.1.0",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
   "bin": {
     "vsb": "./bin/vsb"
   }
 }
-
