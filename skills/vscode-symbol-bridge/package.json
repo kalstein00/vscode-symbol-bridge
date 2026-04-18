@@ -1,0 +1,9 @@
+{
+  "name": "cline-skill-vscode-symbol-bridge",
+  "private": true,
+  "version": "0.1.0",
+  "bin": {
+    "vsb": "./bin/vsb"
+  }
+}
+

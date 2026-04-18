@@ -1,0 +1,47 @@
+{
+  "name": "vscode-symbol-bridge",
+  "displayName": "VS Code Symbol Bridge",
+  "description": "Expose VS Code symbol provider results over local IPC for external tools.",
+  "version": "0.1.0",
+  "publisher": "kalstein",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vscodeSymbolBridge.showHealth",
+        "title": "VS Code Symbol Bridge: Show Health"
+      }
+    ],
+    "configuration": {
+      "title": "VS Code Symbol Bridge",
+      "properties": {
+        "vscodeSymbolBridge.enableDebugLogs": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable verbose logging for the local IPC bridge."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.18",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.8.3",
+    "@vscode/vsce": "^3.6.2"
+  }
+}
+
