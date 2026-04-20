@@ -1,34 +1,38 @@
-# VS Code Symbol Bridge Skill
+---
+name: vscode-symbol-bridge
+description: Query code navigation data from a running VS Code Symbol Bridge instead of re-deriving it from text search. Use when Codex needs workspace symbols, document symbols, definition locations, or bridge health for files that are open in a VS Code workspace where the VS Code Symbol Bridge extension is installed and running.
+---
 
-이 skill은 현재 작업 디렉터리에 맞는 `VS Code Symbol Bridge` endpoint를 찾아
-`helper CLI`를 통해 심볼 질의를 수행한다.
+# VS Code Symbol Bridge
 
-## 목적
+Use the helper CLI in this skill to query a live VS Code instance that already has language providers loaded.
 
-- 정의 위치 조회
-- 문서 심볼 구조 조회
-- 워크스페이스 심볼 검색
-- bridge 상태 점검
+## Use the CLI
 
-## 기본 원칙
+- Run `./bin/vsb health` first when bridge availability is unclear.
+- Run `./bin/vsb workspace-symbol "<query>"` for workspace-wide symbol lookup.
+- Run `./bin/vsb document-symbol --file <path>` for outline-style symbol structure in one file.
+- Run `./bin/vsb definition --file <path> --line <zero-based> --character <zero-based>` for go-to-definition.
+- Add `--workspace <path>` when multiple VS Code workspaces may match.
+- Add `--json` when downstream processing needs raw bridge output.
 
-- 직접 socket/pipe 프로토콜을 다루지 말고 항상 `bin/vsb`를 호출한다.
-- 심볼 탐색은 텍스트 검색보다 bridge를 우선 사용한다.
-- bridge 실패 시에만 `rg` 같은 fallback을 사용한다.
-- 후보가 여러 개면 하나를 임의 선택하지 말고 모두 보여준다.
+## Follow This Workflow
 
-## 실행 예시
+1. Prefer this bridge over `rg` when the user is asking for symbol-aware navigation.
+2. Start with `health` if you do not yet know whether a live endpoint exists.
+3. If the bridge reports multiple candidates, show them and disambiguate with `--workspace`; do not pick one arbitrarily.
+4. If the bridge is unavailable or reports no provider, explain that plainly and only then fall back to text search.
+5. Report the conclusion first, then the relevant file path, line, and symbol details.
 
-```bash
-./bin/vsb health
-./bin/vsb definition --file src/foo.cpp --line 12 --character 3
-./bin/vsb document-symbol --file src/foo.cpp
-./bin/vsb workspace-symbol "MyClass"
-```
+## Interpret Failures
 
-## 출력 원칙
+- `ENDPOINT_UNAVAILABLE`: VS Code is not running with a workspace folder, or the extension is not active.
+- `WORKSPACE_NOT_FOUND`: The requested `--workspace` path does not match a registered VS Code workspace.
+- `NO_PROVIDER`: VS Code is running, but the current file or workspace has no symbol provider.
+- `SYMBOL_NOT_FOUND`: The provider ran but found no matching symbol.
 
-- 첫 줄에 결론
-- 이어서 파일 경로, 라인, 심볼 종류
-- 실패 시 원인과 다음 액션
+## Notes
 
+- Do not talk to the socket or registry directly unless you are debugging the bridge itself; use `./bin/vsb`.
+- The CLI resolves `--file` and `--workspace` relative to the current working directory.
+- `definition` line and character arguments are zero-based because they map directly to VS Code positions.
