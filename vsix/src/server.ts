@@ -15,7 +15,7 @@ import {
 } from "./protocol";
 import { createErrorResponse, createOkResponse, parseRequestLine } from "./bridge";
 import { detectProviderStatusFromVsCode } from "./provider";
-import { ensureRuntimeDir, registerEntry, unregisterEntry } from "./registry";
+import { ensureRuntimeDir, registerEntry, RegistryLogger, unregisterEntry } from "./registry";
 import {
   shouldTreatEmptyDefinitionAsNotFound,
   shouldTreatEmptyWorkspaceSymbolAsNotFound
@@ -41,11 +41,17 @@ export class BridgeServer implements vscode.Disposable {
   private server?: net.Server;
   private endpoint?: string;
   private startedAt?: string;
+  private readonly registryLogger: RegistryLogger;
 
   constructor(options: BridgeServerOptions) {
     this.context = options.context;
     this.instanceId = options.instanceId;
     this.output = options.output;
+    this.registryLogger = {
+      debug: (message) => this.debug(message),
+      info: (message) => this.info(message),
+      warn: (message) => this.warn(message)
+    };
   }
 
   async start(): Promise<void> {
@@ -66,6 +72,7 @@ export class BridgeServer implements vscode.Disposable {
 
         socket.on("data", (chunk) => {
           buffer += chunk;
+          this.debug(`socket.data bytes=${Buffer.byteLength(chunk, "utf8")} buffered=${Buffer.byteLength(buffer, "utf8")}`);
           let index = buffer.indexOf("\n");
           while (index >= 0) {
             const line = buffer.slice(0, index).trim();
@@ -84,7 +91,7 @@ export class BridgeServer implements vscode.Disposable {
 
     await this.updateRegistry();
     this.registerEventHandlers();
-    this.output.appendLine(`server started at ${this.endpoint}`);
+    this.info(`server started endpoint=${this.endpoint}`);
   }
 
   async dispose(): Promise<void> {
@@ -93,7 +100,7 @@ export class BridgeServer implements vscode.Disposable {
       this.server = undefined;
     }
 
-    await unregisterEntry(this.instanceId);
+    await unregisterEntry(this.instanceId, this.registryLogger);
     await this.cleanupExistingEndpoint();
   }
 
@@ -122,20 +129,30 @@ export class BridgeServer implements vscode.Disposable {
 
   private async handleLine(line: string, socket: net.Socket): Promise<void> {
     const startedAt = Date.now();
+    this.debug(`request.line bytes=${Buffer.byteLength(line, "utf8")} preview=${this.preview(line)}`);
     const response = await this.handleRequest(line);
-    socket.write(`${JSON.stringify(response)}\n`);
-    this.output.appendLine(
-      `request ${response.id} finished in ${Date.now() - startedAt}ms ok=${String(response.ok)}`
+    const serialized = JSON.stringify(response);
+    socket.write(`${serialized}\n`);
+    this.info(
+      `request.finish id=${response.id} ok=${String(response.ok)} elapsedMs=${Date.now() - startedAt} responseBytes=${Buffer.byteLength(serialized, "utf8")}`
     );
+    if (!response.ok) {
+      this.warn(
+        `request.error id=${response.id} code=${response.error?.code ?? ""} message=${response.error?.message ?? ""}`
+      );
+    }
   }
 
   private async handleRequest(line: string): Promise<BridgeResponse> {
     const parsed = parseRequestLine(this.instanceId, line);
     if ("ok" in parsed) {
+      this.warn(`request.invalid message=${parsed.error?.message ?? "unknown"} preview=${this.preview(line)}`);
       return parsed;
     }
 
     const request: BridgeRequest = parsed;
+    this.info(`request.start id=${request.id} method=${request.method}`);
+    this.debug(`request.params id=${request.id} params=${JSON.stringify(request.params ?? {})}`);
 
     try {
       switch (request.method) {
@@ -384,20 +401,48 @@ export class BridgeServer implements vscode.Disposable {
       activeFile: vscode.window.activeTextEditor?.document.uri.fsPath
     };
 
-    await registerEntry(entry);
+    await registerEntry(entry, this.registryLogger);
   }
 
   private registerEventHandlers(): void {
     this.context.subscriptions.push(
       vscode.window.onDidChangeActiveTextEditor(() => {
+        this.debug("event.activeTextEditor.changed");
         void this.updateRegistry();
       })
     );
     this.context.subscriptions.push(
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
+        this.info("event.workspaceFolders.changed");
         void this.updateRegistry();
       })
     );
+  }
+
+  private debug(message: string): void {
+    if (this.debugEnabled()) {
+      this.output.appendLine(`[debug] ${message}`);
+    }
+  }
+
+  private info(message: string): void {
+    this.output.appendLine(message);
+  }
+
+  private warn(message: string): void {
+    this.output.appendLine(`[warn] ${message}`);
+  }
+
+  private debugEnabled(): boolean {
+    return vscode.workspace.getConfiguration("vscodeSymbolBridge").get<boolean>("enableDebugLogs", false);
+  }
+
+  private preview(value: string, limit = 240): string {
+    const normalized = value.replace(/\s+/g, " ").trim();
+    if (normalized.length <= limit) {
+      return normalized;
+    }
+    return `${normalized.slice(0, limit)}...`;
   }
 }
 
