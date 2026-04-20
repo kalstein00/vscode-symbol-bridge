@@ -1,6 +1,6 @@
 ---
 name: vscode-symbol-bridge
-description: Query code navigation data from a running VS Code Symbol Bridge instead of re-deriving it from text search. Use when Codex needs workspace symbols, document symbols, definition locations, or bridge health for files that are open in a VS Code workspace where the VS Code Symbol Bridge extension is installed and running.
+description: Query code navigation data from a running VS Code Symbol Bridge instead of re-deriving it from text search. Use when workspace symbols, document symbols, definition locations, or bridge health are needed for files that are open in a VS Code workspace where the VS Code Symbol Bridge extension is installed and running.
 ---
 
 # VS Code Symbol Bridge
