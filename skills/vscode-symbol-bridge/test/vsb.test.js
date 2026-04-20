@@ -7,8 +7,13 @@ const {
   CliError,
   buildRequest,
   formatPathWithPosition,
+  initLogger,
+  logsDir,
+  maxLogFiles,
+  parseFirstJsonDocument,
   parseJsonDocuments,
   parseArgs,
+  pruneOldLogs,
   selectEntry
 } = require("../lib/vsb.js");
 
@@ -80,6 +85,27 @@ test("formatPathWithPosition converts file uri to path line and column", () => {
 test("parseJsonDocuments accepts concatenated JSON arrays", () => {
   const parsed = parseJsonDocuments('[{"a":1}][{"b":2}]');
   assert.deepEqual(parsed, [[{ a: 1 }], [{ b: 2 }]]);
+});
+
+test("parseFirstJsonDocument ignores trailing non-json junk", () => {
+  const parsed = parseFirstJsonDocument('{"ok":true}garbage-after');
+  assert.deepEqual(parsed, { ok: true });
+});
+
+test("initLogger writes logs under the skill folder and prunes old files", () => {
+  const created = [];
+  for (let index = 0; index < maxLogFiles + 2; index += 1) {
+    created.push(initLogger([`cmd-${index}`]));
+  }
+
+  pruneOldLogs();
+
+  const files = require("node:fs").readdirSync(logsDir)
+    .filter((name) => name.startsWith("vsb-") && name.endsWith(".log"))
+    .sort();
+
+  assert.ok(created.every((filePath) => filePath.startsWith(logsDir)));
+  assert.ok(files.length <= maxLogFiles);
 });
 
 test("bin/vsb executes main and reports missing endpoint", () => {

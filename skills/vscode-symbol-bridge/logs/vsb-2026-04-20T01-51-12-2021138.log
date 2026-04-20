@@ -1,0 +1,14 @@
+{"ts":"2026-04-20T01:51:12.395Z","event":"start","payload":{"argv":["health"],"cwd":"/home/kalstein/vscode/vscode-symbol-bridge","runtimeRoot":"/run/user/1001/vscode-symbol-bridge","registryPath":"/run/user/1001/vscode-symbol-bridge/registry.json","skillRoot":"/home/kalstein/vscode/vscode-symbol-bridge/skills/vscode-symbol-bridge"}}
+{"ts":"2026-04-20T01:51:12.396Z","event":"args.parsed","payload":{"command":"health","flags":{},"positional":[]}}
+{"ts":"2026-04-20T01:51:12.396Z","event":"request.built","payload":{"payload":{"method":"health","params":{}}}}
+{"ts":"2026-04-20T01:51:12.396Z","event":"registry.read","payload":{"bytes":568}}
+{"ts":"2026-04-20T01:51:12.397Z","event":"registry.parsed","payload":{"documents":1,"entries":1}}
+{"ts":"2026-04-20T01:51:12.397Z","event":"entry.select.start","payload":{"entries":1,"flags":{}}}
+{"ts":"2026-04-20T01:51:12.397Z","event":"entry.select.cwd","payload":{"endpoint":"/run/user/1001/vscode-symbol-bridge/bridge-ba57b65b-4d99-45e0-9eb8-ae51ad0c46b7.sock","root":"/home/kalstein/vscode/vscode-symbol-bridge"}}
+{"ts":"2026-04-20T01:51:12.397Z","event":"entry.selected","payload":{"endpoint":"/run/user/1001/vscode-symbol-bridge/bridge-ba57b65b-4d99-45e0-9eb8-ae51ad0c46b7.sock","workspaceFolders":["/home/kalstein/vscode/vscode-symbol-bridge"]}}
+{"ts":"2026-04-20T01:51:12.398Z","event":"request.connect","payload":{"endpoint":"/run/user/1001/vscode-symbol-bridge/bridge-ba57b65b-4d99-45e0-9eb8-ae51ad0c46b7.sock","request":{"id":"a78ebb47-1f2a-41a1-a146-595befcdec92","method":"health","params":{}}}}
+{"ts":"2026-04-20T01:51:12.401Z","event":"request.connected","payload":{"endpoint":"/run/user/1001/vscode-symbol-bridge/bridge-ba57b65b-4d99-45e0-9eb8-ae51ad0c46b7.sock"}}
+{"ts":"2026-04-20T01:51:12.403Z","event":"request.data","payload":{"chunkBytes":741,"bufferBytes":741}}
+{"ts":"2026-04-20T01:51:12.404Z","event":"request.line","payload":{"bytes":740,"preview":"{\"id\":\"a78ebb47-1f2a-41a1-a146-595befcdec92\",\"ok\":true,\"meta\":{\"instanceId\":\"ba57b65b-4d99-45e0-9eb8-ae51ad0c46b7\"},\"result\":{\"instanceId\":\"ba57b65b-4d99-45e0-9eb8-ae51ad0c46b7\",\"endpoint\":\"/run/user/1001/vscode-symbol-bridge/bridge-ba57b65b-4d99-45e0-9eb8-ae51ad0c46b7.sock\",\"workspaceFolders\":[\"/home/kalstein/vscode/vscode-symbol-bridge\"],\"activeFile\":\"/home/kalstein/vscode/vscode-symbol-bridge/s"}}
+{"ts":"2026-04-20T01:51:12.404Z","event":"response.received","payload":{"ok":true,"id":"a78ebb47-1f2a-41a1-a146-595befcdec92","errorCode":"","resultKeys":["instanceId","endpoint","workspaceFolders","activeFile","activeLanguageId","capabilities","singleFileMode","providerReason","providerStatus"]}}
+{"ts":"2026-04-20T01:51:12.406Z","event":"response.printed-human","payload":{"command":"health","exitCode":0}}

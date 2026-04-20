@@ -1,0 +1,6 @@
+{"ts":"2026-04-20T01:51:12.626Z","event":"start","payload":{"argv":["health"],"cwd":"/home/kalstein/vscode/vscode-symbol-bridge/skills/vscode-symbol-bridge","runtimeRoot":"/home/kalstein/vscode/vscode-symbol-bridge/skills/vscode-symbol-bridge/.tmp/missing-runtime/vscode-symbol-bridge","registryPath":"/home/kalstein/vscode/vscode-symbol-bridge/skills/vscode-symbol-bridge/.tmp/missing-runtime/vscode-symbol-bridge/registry.json","skillRoot":"/home/kalstein/vscode/vscode-symbol-bridge/skills/vscode-symbol-bridge"}}
+{"ts":"2026-04-20T01:51:12.626Z","event":"args.parsed","payload":{"command":"health","flags":{},"positional":[]}}
+{"ts":"2026-04-20T01:51:12.626Z","event":"request.built","payload":{"payload":{"method":"health","params":{}}}}
+{"ts":"2026-04-20T01:51:12.627Z","event":"registry.missing","payload":{}}
+{"ts":"2026-04-20T01:51:12.627Z","event":"entry.select.start","payload":{"entries":0,"flags":{}}}
+{"ts":"2026-04-20T01:51:12.627Z","event":"entry.select.none-live","payload":{}}

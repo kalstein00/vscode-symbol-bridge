@@ -7,6 +7,10 @@ const net = require("node:net");
 const crypto = require("node:crypto");
 const { pathToFileURL } = require("node:url");
 const { fileURLToPath } = require("node:url");
+const skillRoot = path.resolve(__dirname, "..");
+const logsDir = path.join(skillRoot, "logs");
+const maxLogFiles = 10;
+let activeLogFile;
 
 function runtimeRoot() {
   switch (process.platform) {
@@ -21,6 +25,57 @@ function runtimeRoot() {
 
 function registryPath() {
   return path.join(runtimeRoot(), "registry.json");
+}
+
+function ensureLogsDir() {
+  fs.mkdirSync(logsDir, { recursive: true });
+}
+
+function pruneOldLogs() {
+  ensureLogsDir();
+  const entries = fs.readdirSync(logsDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.startsWith("vsb-") && entry.name.endsWith(".log"))
+    .map((entry) => {
+      const filePath = path.join(logsDir, entry.name);
+      return {
+        filePath,
+        mtimeMs: fs.statSync(filePath).mtimeMs
+      };
+    })
+    .sort((left, right) => right.mtimeMs - left.mtimeMs);
+
+  for (const entry of entries.slice(maxLogFiles)) {
+    fs.unlinkSync(entry.filePath);
+  }
+}
+
+function initLogger(argv) {
+  ensureLogsDir();
+  const stamp = new Date().toISOString().replaceAll(":", "-").replace(/\..+$/, "");
+  activeLogFile = path.join(logsDir, `vsb-${stamp}-${process.pid}.log`);
+  fs.writeFileSync(activeLogFile, "");
+  pruneOldLogs();
+  logDebug("start", {
+    argv,
+    cwd: process.cwd(),
+    runtimeRoot: runtimeRoot(),
+    registryPath: registryPath(),
+    skillRoot
+  });
+  return activeLogFile;
+}
+
+function logDebug(event, payload = {}) {
+  if (!activeLogFile) {
+    return;
+  }
+
+  const line = JSON.stringify({
+    ts: new Date().toISOString(),
+    event,
+    payload
+  });
+  fs.appendFileSync(activeLogFile, `${line}\n`);
 }
 
 function parseArgs(argv) {
@@ -57,21 +112,29 @@ function parseArgs(argv) {
 function loadRegistry() {
   try {
     const raw = fs.readFileSync(registryPath(), "utf8");
+    logDebug("registry.read", { bytes: raw.length });
     const documents = parseJsonDocuments(raw);
     if (documents.length === 0) {
+      logDebug("registry.empty");
       return [];
     }
     if (documents.length === 1) {
-      return Array.isArray(documents[0]) ? documents[0] : [];
+      const entries = Array.isArray(documents[0]) ? documents[0] : [];
+      logDebug("registry.parsed", { documents: 1, entries: entries.length });
+      return entries;
     }
     if (documents.every(Array.isArray)) {
-      return documents.flat();
+      const entries = documents.flat();
+      logDebug("registry.parsed", { documents: documents.length, entries: entries.length });
+      return entries;
     }
     throw new Error("Registry file contains multiple JSON documents with unexpected shapes");
   } catch (error) {
     if (error && error.code === "ENOENT") {
+      logDebug("registry.missing");
       return [];
     }
+    logDebug("registry.error", { message: error instanceof Error ? error.message : String(error) });
     throw error;
   }
 }
@@ -150,6 +213,18 @@ function parseJsonDocuments(raw) {
   return documents;
 }
 
+function parseFirstJsonDocument(raw) {
+  let index = 0;
+  while (index < raw.length && /\s/.test(raw[index])) {
+    index += 1;
+  }
+  if (index >= raw.length) {
+    throw new Error("No JSON document found");
+  }
+  const end = findJsonDocumentEnd(raw, index);
+  return JSON.parse(raw.slice(index, end));
+}
+
 function alive(pid) {
   try {
     process.kill(pid, 0);
@@ -167,8 +242,10 @@ function currentWorkingFile(flags) {
 }
 
 function selectEntry(entries, flags) {
+  logDebug("entry.select.start", { entries: entries.length, flags });
   const liveEntries = entries.filter((entry) => alive(entry.pid));
   if (liveEntries.length === 0) {
+    logDebug("entry.select.none-live");
     throw new CliError(
       "ENDPOINT_UNAVAILABLE",
       "No live VS Code Symbol Bridge endpoint found. Open VS Code with a workspace folder first."
@@ -179,6 +256,7 @@ function selectEntry(entries, flags) {
     const explicit = path.resolve(process.cwd(), flags.workspace);
     const matches = liveEntries.filter((entry) => (entry.workspaceFolders || []).includes(explicit));
     if (matches.length === 1) {
+      logDebug("entry.select.explicit", { endpoint: matches[0].endpoint, workspace: explicit });
       return matches[0];
     }
     if (matches.length > 1) {
@@ -192,6 +270,7 @@ function selectEntry(entries, flags) {
   if (file) {
     const byActiveFile = liveEntries.filter((entry) => entry.activeFile === file);
     if (byActiveFile.length === 1) {
+      logDebug("entry.select.active-file", { endpoint: byActiveFile[0].endpoint, file });
       return byActiveFile[0];
     }
   }
@@ -208,12 +287,14 @@ function selectEntry(entries, flags) {
   if (candidates.length > 0) {
     candidates.sort((left, right) => right.bestRoot.length - left.bestRoot.length);
     if (candidates.length === 1 || candidates[0].bestRoot.length > candidates[1].bestRoot.length) {
+      logDebug("entry.select.cwd", { endpoint: candidates[0].entry.endpoint, root: candidates[0].bestRoot });
       return candidates[0].entry;
     }
     throw new Error("Multiple endpoints matched the current working directory. Use --workspace to disambiguate.");
   }
 
   if (liveEntries.length === 1) {
+    logDebug("entry.select.single", { endpoint: liveEntries[0].endpoint });
     return liveEntries[0];
   }
 
@@ -283,11 +364,17 @@ function buildRequest(command, flags, positional) {
 
 function sendRequest(endpoint, request) {
   return new Promise((resolve, reject) => {
+    logDebug("request.connect", { endpoint, request });
     const socket = net.createConnection(endpoint);
     let buffer = "";
 
     socket.setEncoding("utf8");
     socket.once("error", (error) => {
+      logDebug("request.socket-error", {
+        endpoint,
+        code: error && error.code ? error.code : "",
+        message: error instanceof Error ? error.message : String(error)
+      });
       if (error && ["ENOENT", "ECONNREFUSED", "EPIPE"].includes(error.code)) {
         reject(
           new CliError(
@@ -302,18 +389,25 @@ function sendRequest(endpoint, request) {
     });
     socket.on("data", (chunk) => {
       buffer += chunk;
+      logDebug("request.data", { chunkBytes: chunk.length, bufferBytes: buffer.length });
       const newline = buffer.indexOf("\n");
       if (newline >= 0) {
         socket.end();
         try {
-          const documents = parseJsonDocuments(buffer.slice(0, newline));
-          resolve(documents[0]);
+          const rawLine = buffer.slice(0, newline);
+          logDebug("request.line", { bytes: rawLine.length, preview: rawLine.slice(0, 400) });
+          resolve(parseFirstJsonDocument(rawLine));
         } catch (error) {
+          logDebug("request.parse-error", {
+            message: error instanceof Error ? error.message : String(error),
+            preview: buffer.slice(0, Math.min(buffer.length, 600))
+          });
           reject(error);
         }
       }
     });
     socket.on("connect", () => {
+      logDebug("request.connected", { endpoint });
       socket.write(`${JSON.stringify(request)}\n`);
     });
   });
@@ -412,7 +506,9 @@ function printHuman(response, command) {
 }
 
 async function main() {
+  initLogger(process.argv.slice(2));
   const { command, flags, positional } = parseArgs(process.argv.slice(2));
+  logDebug("args.parsed", { command, flags, positional });
 
   if (!command || flags.help) {
     console.log("Usage: vsb <health|workspace-symbol|document-symbol|definition> [options]");
@@ -428,7 +524,9 @@ async function main() {
   }
 
   const payload = buildRequest(command, flags, positional);
+  logDebug("request.built", { payload });
   const entry = selectEntry(loadRegistry(), flags);
+  logDebug("entry.selected", { endpoint: entry.endpoint, workspaceFolders: entry.workspaceFolders });
   const request = {
     id: crypto.randomUUID(),
     method: payload.method,
@@ -436,13 +534,21 @@ async function main() {
   };
 
   const response = await sendRequest(entry.endpoint, request);
+  logDebug("response.received", {
+    ok: !!response.ok,
+    id: response.id,
+    errorCode: response.error ? response.error.code : "",
+    resultKeys: response.result && typeof response.result === "object" ? Object.keys(response.result) : []
+  });
 
   if (flags.json) {
     console.log(JSON.stringify(response, null, 2));
+    logDebug("response.printed-json");
     return;
   }
 
   printHuman(response, command);
+  logDebug("response.printed-human", { command, exitCode: process.exitCode ?? 0 });
 }
 
 class CliError extends Error {
@@ -457,15 +563,21 @@ module.exports = {
   CliError,
   buildRequest,
   formatPathWithPosition,
+  initLogger,
+  logsDir,
   main,
+  maxLogFiles,
+  parseFirstJsonDocument,
   parseJsonDocuments,
   parseArgs,
+  pruneOldLogs,
   selectEntry,
   sendRequest
 };
 
 if (require.main === module) {
   main().catch((error) => {
+    logDebug("fatal.error", { message: error instanceof Error ? error.message : String(error) });
     if (error instanceof CliError) {
       console.error(`Bridge error: ${error.code}`);
       console.error(error.message);
