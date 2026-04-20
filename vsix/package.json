@@ -4,6 +4,11 @@
   "description": "Expose VS Code symbol provider results over local IPC for external tools.",
   "version": "0.1.0",
   "publisher": "kalstein",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kalstein00/vscode-symbol-bridge.git"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -37,13 +42,13 @@
     "test": "npm run build && node --test test/*.test.js",
     "test:integration": "npm run build && node test/integration/runTest.js",
     "watch": "tsc -w -p .",
-    "package": "vsce package"
+    "package": "npm run build && node scripts/package-vsix.js"
   },
   "devDependencies": {
-    "@vscode/test-electron": "^2.5.2",
     "@types/node": "^22.15.18",
     "@types/vscode": "^1.90.0",
+    "@vscode/test-electron": "^2.5.2",
     "typescript": "^5.8.3",
-    "@vscode/vsce": "^3.6.2"
+    "yazl": "^3.3.1"
   }
 }
