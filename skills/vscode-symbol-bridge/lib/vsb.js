@@ -371,6 +371,7 @@ module.exports = {
   CliError,
   buildRequest,
   formatPathWithPosition,
+  main,
   parseArgs,
   selectEntry,
   sendRequest

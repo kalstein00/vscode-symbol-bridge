@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 
 const {
   CliError,
@@ -73,4 +74,19 @@ test("formatPathWithPosition converts file uri to path line and column", () => {
     start: { line: 9, character: 1 }
   });
   assert.equal(output, `${path.sep}tmp${path.sep}example.cpp:10:2`);
+});
+
+test("bin/vsb executes main and reports missing endpoint", () => {
+  const skillRoot = path.resolve(__dirname, "..");
+  const result = spawnSync("node", [path.join(skillRoot, "bin/vsb"), "health"], {
+    cwd: skillRoot,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      XDG_RUNTIME_DIR: path.join(skillRoot, ".tmp", "missing-runtime")
+    }
+  });
+
+  assert.equal(result.status, 3);
+  assert.match(result.stderr, /Bridge error: ENDPOINT_UNAVAILABLE/);
 });
