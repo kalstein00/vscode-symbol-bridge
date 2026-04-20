@@ -7,6 +7,7 @@ const {
   CliError,
   buildRequest,
   formatPathWithPosition,
+  parseJsonDocuments,
   parseArgs,
   selectEntry
 } = require("../lib/vsb.js");
@@ -74,6 +75,11 @@ test("formatPathWithPosition converts file uri to path line and column", () => {
     start: { line: 9, character: 1 }
   });
   assert.equal(output, `${path.sep}tmp${path.sep}example.cpp:10:2`);
+});
+
+test("parseJsonDocuments accepts concatenated JSON arrays", () => {
+  const parsed = parseJsonDocuments('[{"a":1}][{"b":2}]');
+  assert.deepEqual(parsed, [[{ a: 1 }], [{ b: 2 }]]);
 });
 
 test("bin/vsb executes main and reports missing endpoint", () => {

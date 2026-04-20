@@ -56,13 +56,98 @@ function parseArgs(argv) {
 
 function loadRegistry() {
   try {
-    return JSON.parse(fs.readFileSync(registryPath(), "utf8"));
+    const raw = fs.readFileSync(registryPath(), "utf8");
+    const documents = parseJsonDocuments(raw);
+    if (documents.length === 0) {
+      return [];
+    }
+    if (documents.length === 1) {
+      return Array.isArray(documents[0]) ? documents[0] : [];
+    }
+    if (documents.every(Array.isArray)) {
+      return documents.flat();
+    }
+    throw new Error("Registry file contains multiple JSON documents with unexpected shapes");
   } catch (error) {
     if (error && error.code === "ENOENT") {
       return [];
     }
     throw error;
   }
+}
+
+function findJsonDocumentEnd(text, start) {
+  const opening = text[start];
+  if (opening !== "{" && opening !== "[") {
+    throw new Error(`Expected JSON object or array at position ${start}`);
+  }
+
+  const stack = [opening];
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start + 1; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{" || char === "[") {
+      stack.push(char);
+      continue;
+    }
+
+    if (char === "}" || char === "]") {
+      const expected = char === "}" ? "{" : "[";
+      const actual = stack.pop();
+      if (actual !== expected) {
+        throw new Error(`Mismatched JSON delimiter at position ${index}`);
+      }
+      if (stack.length === 0) {
+        return index + 1;
+      }
+    }
+  }
+
+  throw new Error("Unterminated JSON document");
+}
+
+function parseJsonDocuments(raw) {
+  const documents = [];
+  let index = 0;
+
+  while (index < raw.length) {
+    while (index < raw.length && /\s/.test(raw[index])) {
+      index += 1;
+    }
+
+    if (index >= raw.length) {
+      break;
+    }
+
+    const end = findJsonDocumentEnd(raw, index);
+    documents.push(JSON.parse(raw.slice(index, end)));
+    index = end;
+  }
+
+  return documents;
 }
 
 function alive(pid) {
@@ -221,7 +306,8 @@ function sendRequest(endpoint, request) {
       if (newline >= 0) {
         socket.end();
         try {
-          resolve(JSON.parse(buffer.slice(0, newline)));
+          const documents = parseJsonDocuments(buffer.slice(0, newline));
+          resolve(documents[0]);
         } catch (error) {
           reject(error);
         }
@@ -372,6 +458,7 @@ module.exports = {
   buildRequest,
   formatPathWithPosition,
   main,
+  parseJsonDocuments,
   parseArgs,
   selectEntry,
   sendRequest
